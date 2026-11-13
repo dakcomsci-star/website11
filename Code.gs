@@ -173,6 +173,12 @@ function handleApiRequest(action, payload) {
       case 'deleteBill':
         result = deleteBill(payload.bill_id);
         break;
+      case 'cleanDuplicateBills':
+        result = cleanDuplicateBills();
+        break;
+      case 'cleanDuplicateMeters':
+        result = cleanDuplicateMeters();
+        break;
       case 'getSpreadsheetInfo':
         const ss = getSpreadsheet();
         result = { id: ss.getId(), name: ss.getName(), url: ss.getUrl() };
@@ -483,11 +489,25 @@ function saveRoomType(rt) {
   const sheet = ss.getSheetByName(SHEETS.ROOM_TYPES);
   if (!sheet) throw new Error('ไม่พบชีต RoomTypes');
 
+  const name = String(rt.name || '').trim();
+  if (!name) throw new Error('กรุณาระบุชื่อประเภทห้องพัก');
+
+  const data = sheet.getDataRange().getValues();
+  // ตรวจสอบชื่อประเภทห้องซ้ำ
+  for (let i = 1; i < data.length; i++) {
+    const rowId = String(data[i][0]).trim();
+    const rowName = String(data[i][1]).trim();
+    if (rowName.toLowerCase() === name.toLowerCase()) {
+      if (!rt.id || String(rt.id).trim() !== rowId) {
+        throw new Error(`ชื่อประเภทห้องพัก "${name}" มีอยู่ในระบบแล้ว กรุณาใช้ชื่ออื่น`);
+      }
+    }
+  }
+
   if (rt.id) {
-    const data = sheet.getDataRange().getValues();
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][0]).trim() === String(rt.id).trim()) {
-        sheet.getRange(i + 1, 2).setValue(rt.name);
+        sheet.getRange(i + 1, 2).setValue(name);
         sheet.getRange(i + 1, 3).setValue(Number(rt.base_price));
         sheet.getRange(i + 1, 4).setValue(rt.description || '');
         return { success: true, message: 'แก้ไขประเภทห้องพักเรียบร้อยแล้ว' };
@@ -496,7 +516,7 @@ function saveRoomType(rt) {
   }
 
   const newId = String(Date.now());
-  sheet.appendRow([newId, rt.name, Number(rt.base_price), rt.description || '', new Date()]);
+  sheet.appendRow([newId, name, Number(rt.base_price), rt.description || '', new Date()]);
   return { success: true, message: 'เพิ่มประเภทห้องพักเรียบร้อยแล้ว', id: newId };
 }
 
@@ -561,11 +581,25 @@ function saveRoom(room) {
   const sheet = ss.getSheetByName(SHEETS.ROOMS);
   if (!sheet) throw new Error('ไม่พบชีต Rooms');
 
+  const roomNum = String(room.room_number || '').trim();
+  if (!roomNum) throw new Error('กรุณาระบุหมายเลขห้องพัก');
+
+  const data = sheet.getDataRange().getValues();
+  // ตรวจสอบหมายเลขห้องซ้ำ
+  for (let i = 1; i < data.length; i++) {
+    const rowId = String(data[i][0]).trim();
+    const rowRoomNum = String(data[i][1]).trim();
+    if (rowRoomNum === roomNum) {
+      if (!room.id || String(room.id).trim() !== rowId) {
+        throw new Error(`หมายเลขห้อง "${roomNum}" มีอยู่ในระบบแล้ว ไม่สามารถสร้างซ้ำได้`);
+      }
+    }
+  }
+
   if (room.id) {
-    const data = sheet.getDataRange().getValues();
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][0]).trim() === String(room.id).trim()) {
-        sheet.getRange(i + 1, 2).setValue(String(room.room_number));
+        sheet.getRange(i + 1, 2).setValue(roomNum);
         sheet.getRange(i + 1, 3).setValue(Number(room.floor));
         sheet.getRange(i + 1, 4).setValue(String(room.room_type_id));
         sheet.getRange(i + 1, 5).setValue(room.custom_price ? Number(room.custom_price) : '');
@@ -579,7 +613,7 @@ function saveRoom(room) {
   const newId = String(Date.now());
   sheet.appendRow([
     newId,
-    String(room.room_number),
+    roomNum,
     Number(room.floor || 1),
     String(room.room_type_id),
     room.custom_price ? Number(room.custom_price) : '',
@@ -608,7 +642,7 @@ function deleteRoom(id) {
 }
 
 /**
- * นำเข้าข้อมูลห้องพักแบบชุด (CSV / Batch)
+ * นำเข้าข้อมูลห้องพักแบบชุด (CSV / Batch) พร้อมตรวจจับและข้ามห้องซ้ำ
  */
 function importRooms(roomsArray) {
   if (!Array.isArray(roomsArray) || roomsArray.length === 0) {
@@ -617,14 +651,30 @@ function importRooms(roomsArray) {
 
   const ss = getSpreadsheet();
   const sheet = ss.getSheetByName(SHEETS.ROOMS);
+  const data = sheet.getDataRange().getValues();
+  const existingNumbers = new Set();
+  for (let i = 1; i < data.length; i++) {
+    existingNumbers.add(String(data[i][1]).trim());
+  }
+
   let imported = 0;
+  let skipped = 0;
+  const seenInBatch = new Set();
 
   roomsArray.forEach(r => {
-    if (r.room_number) {
+    const roomNum = String(r.room_number || '').trim();
+    if (roomNum) {
+      if (existingNumbers.has(roomNum) || seenInBatch.has(roomNum)) {
+        skipped++;
+        return;
+      }
+      seenInBatch.add(roomNum);
+      existingNumbers.add(roomNum);
+
       const newId = String(Date.now() + Math.floor(Math.random() * 1000));
       sheet.appendRow([
         newId,
-        String(r.room_number),
+        roomNum,
         Number(r.floor || 1),
         String(r.room_type_id || '1'),
         r.custom_price ? Number(r.custom_price) : '',
@@ -636,7 +686,11 @@ function importRooms(roomsArray) {
     }
   });
 
-  return { success: true, message: `นำเข้าข้อมูลห้องพักเรียบร้อยแล้วจำนวน ${imported} ห้อง` };
+  let msg = `นำเข้าข้อมูลห้องพักเรียบร้อยแล้วจำนวน ${imported} ห้อง`;
+  if (skipped > 0) {
+    msg += ` (ข้ามห้องที่หมายเลขซ้ำ ${skipped} ห้อง)`;
+  }
+  return { success: true, message: msg, imported: imported, skipped: skipped };
 }
 
 /**
@@ -682,6 +736,19 @@ function createContract(contractData) {
   const contractSheet = ss.getSheetByName(SHEETS.CONTRACTS);
   const roomSheet = ss.getSheetByName(SHEETS.ROOMS);
 
+  const roomId = String(contractData.room_id || '').trim();
+  if (!roomId) throw new Error('กรุณาระบุห้องพักสำหรับทำสัญญา');
+
+  // ตรวจสอบว่าห้องนี้มีสัญญาที่ยังใช้งานอยู่ (Active) หรือไม่ เพื่อป้องกันการทำสัญญาซ้ำซ้อน
+  const cData = contractSheet.getDataRange().getValues();
+  for (let i = 1; i < cData.length; i++) {
+    const rowRoomId = String(cData[i][2]).trim();
+    const rowStatus = String(cData[i][11]).trim();
+    if (rowRoomId === roomId && rowStatus === 'active') {
+      throw new Error('ห้องนี้มีสัญญาเช่าที่ยังเปิดใช้งานอยู่ (Active) แล้ว ไม่สามารถทำสัญญาซ้อนได้ กรุณา Check-out คืนห้องเดิมก่อน');
+    }
+  }
+
   // 1. Save or Find Tenant
   let tenantId = contractData.tenant_id;
   if (!tenantId) {
@@ -698,7 +765,6 @@ function createContract(contractData) {
 
   // 2. Generate Contract Code
   const year = new Date().getFullYear();
-  const cData = contractSheet.getDataRange().getValues();
   const contractCode = 'CNT-' + year + '-' + String(cData.length).padStart(4, '0');
   const contractId = String(Date.now() + 1);
 
@@ -1026,12 +1092,25 @@ function generateBills(monthYear, dueDate) {
   const targetMonth = normalizeMonthYear(monthYear);
 
   const contracts = getSheetData(SHEETS.CONTRACTS).filter(c => c.status === 'active');
-  const meterReadings = getMeterReadings(targetMonth);
-  const meterMap = {};
-  meterReadings.forEach(m => { meterMap[String(m.room_id).trim()] = m; });
+  if (contracts.length === 0) {
+    return { success: false, message: 'ไม่พบสัญญาเช่าที่กำลังใช้งาน (Active) ในระบบ กรุณาทำสัญญาเช่าก่อนออกบิล' };
+  }
 
   const existingBills = getSheetData(SHEETS.BILLS).filter(b => normalizeMonthYear(b.month_year) === targetMonth);
   const billedContractIds = new Set(existingBills.map(b => String(b.contract_id).trim()));
+
+  const pendingContracts = contracts.filter(c => !billedContractIds.has(String(c.id).trim()));
+  if (pendingContracts.length === 0) {
+    return {
+      success: true,
+      message: `งวดเดือน ${targetMonth} มีการออกบิลครบทุกห้องแล้ว (${existingBills.length} ห้อง) ไม่พบบิลใหม่ที่ต้องออกซ้ำ`,
+      generated_count: 0
+    };
+  }
+
+  const meterReadings = getMeterReadings(targetMonth);
+  const meterMap = {};
+  meterReadings.forEach(m => { meterMap[String(m.room_id).trim()] = m; });
 
   const defaultWaterRate = Number(settings.water_rate_default || 18);
   const defaultElecRate = Number(settings.elec_rate_default || 8);
@@ -1147,6 +1226,102 @@ function deleteBill(billId) {
     }
   }
   throw new Error('ไม่พบบิลที่ต้องการลบ');
+}
+
+/**
+ * ล้างข้อมูลบิลที่ซ้ำซ้อนในฐานข้อมูล (Keep paid or first, delete duplicate rows)
+ */
+function cleanDuplicateBills() {
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName(SHEETS.BILLS);
+  if (!sheet) throw new Error('ไม่พบชีต Bills');
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 2) {
+    return { success: true, message: 'ไม่พบรายการบิลที่ซ้ำกัน', removedCount: 0 };
+  }
+
+  // data[i][2]: contract_id, data[i][3]: month_year, data[i][17]: status ('paid'/'unpaid')
+  const seen = {};
+  const rowsToDelete = [];
+
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const contractId = String(row[2] || '').trim();
+    const monthYear = normalizeMonthYear(row[3]);
+    const status = String(row[17] || '').trim().toLowerCase();
+    if (!contractId || !monthYear) continue;
+
+    const key = contractId + '_' + monthYear;
+    if (!seen[key]) {
+      seen[key] = { index: i + 1, status: status };
+    } else {
+      // Duplicate found!
+      if (status === 'paid' && seen[key].status !== 'paid') {
+        rowsToDelete.push(seen[key].index);
+        seen[key] = { index: i + 1, status: status };
+      } else {
+        rowsToDelete.push(i + 1);
+      }
+    }
+  }
+
+  rowsToDelete.sort((a, b) => b - a);
+  rowsToDelete.forEach(rowIdx => {
+    sheet.deleteRow(rowIdx);
+  });
+
+  return {
+    success: true,
+    removedCount: rowsToDelete.length,
+    message: rowsToDelete.length > 0 
+      ? `ล้างข้อมูลบิลซ้ำเรียบร้อยแล้ว ลบออกทั้งหมด ${rowsToDelete.length} รายการ`
+      : 'ระบบตรวจสอบแล้ว ไม่พบบิลซ้ำในฐานข้อมูล'
+  };
+}
+
+/**
+ * ล้างข้อมูลการจดมิเตอร์ที่ซ้ำซ้อนในฐานข้อมูล (Keep latest reading)
+ */
+function cleanDuplicateMeters() {
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName(SHEETS.METER_READINGS);
+  if (!sheet) throw new Error('ไม่พบชีต MeterReadings');
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 2) {
+    return { success: true, message: 'ไม่พบรายการมิเตอร์ที่ซ้ำกัน', removedCount: 0 };
+  }
+
+  // data[i][1]: room_id, data[i][2]: month_year
+  const seen = {};
+  const rowsToDelete = [];
+
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const roomId = String(row[1] || '').trim();
+    const monthYear = normalizeMonthYear(row[2]);
+    if (!roomId || !monthYear) continue;
+
+    const key = roomId + '_' + monthYear;
+    if (!seen[key]) {
+      seen[key] = i + 1;
+    } else {
+      rowsToDelete.push(seen[key]);
+      seen[key] = i + 1;
+    }
+  }
+
+  rowsToDelete.sort((a, b) => b - a);
+  rowsToDelete.forEach(rowIdx => {
+    sheet.deleteRow(rowIdx);
+  });
+
+  return {
+    success: true,
+    removedCount: rowsToDelete.length,
+    message: rowsToDelete.length > 0
+      ? `ล้างข้อมูลมิเตอร์ซ้ำเรียบร้อยแล้ว ลบออกทั้งหมด ${rowsToDelete.length} รายการ`
+      : 'ระบบตรวจสอบแล้ว ไม่พบข้อมูลมิเตอร์ซ้ำในฐานข้อมูล'
+  };
 }
 
 /**

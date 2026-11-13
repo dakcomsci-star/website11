@@ -737,6 +737,9 @@
             </div>
 
             <input type="month" id="meterMonthPicker" class="form-control form-control-sm" style="max-width: 170px;" onchange="loadMeterReadings()">
+            <button class="btn btn-outline-danger btn-sm text-nowrap" onclick="runCleanDuplicateMeters()" title="ตรวจสอบและล้างข้อมูลมิเตอร์ซ้ำ">
+              <i class="bi bi-shield-check"></i> <span class="d-none d-md-inline">ตรวจสอบ</span>มิเตอร์ซ้ำ
+            </button>
             <button class="btn btn-success btn-sm text-nowrap" onclick="saveAllMeterReadings()">
               <i class="bi bi-save"></i> บันทึกทั้งหมด
             </button>
@@ -864,6 +867,9 @@
             <p class="text-muted small mb-0">ออกบิลประจำงวด ส่ง QR พร้อมเพย์ และบันทึกรับเงิน</p>
           </div>
           <div class="d-flex gap-2">
+            <button class="btn btn-outline-danger btn-sm" onclick="runCleanDuplicateBills()" title="ตรวจสอบและล้างบิลที่ออกซ้ำในงวดเดียวกัน">
+              <i class="bi bi-shield-check"></i> <span class="d-none d-sm-inline">ตรวจสอบ/</span>ล้างบิลซ้ำ
+            </button>
             <button class="btn btn-success btn-sm" onclick="openGenerateBillsModal()">
               <i class="bi bi-receipt-cutoff"></i> สร้างบิลประจำงวด
             </button>
@@ -1070,6 +1076,34 @@
               <div class="mt-3 text-center">
                 <button class="btn btn-link btn-sm text-decoration-none text-primary" onclick="openConnectModal()">
                   <i class="bi bi-question-circle"></i> ดูวิธีติดตั้ง Google Apps Script
+                </button>
+              </div>
+            </div>
+
+            <!-- Mobile Cross-Device Auto-Connect Card -->
+            <div class="card card-modern p-3 p-md-4 mt-3">
+              <div class="d-flex align-items-center justify-content-between mb-2">
+                <h6 class="fw-bold text-dark mb-0 fs-6"><i class="bi bi-phone text-primary me-2"></i> สแกนใช้งานบนมือถือ / iPad</h6>
+                <span class="badge bg-success-subtle text-success small">ซิงก์อัตโนมัติ</span>
+              </div>
+              <p class="text-muted small mb-2">เปิดกล้องมือถือหรือ iPad สแกน QR ด้านล่างเพื่อเข้าสู่ระบบทันที ข้อมูล Google Sheets จะถูกเชื่อมต่อให้อัตโนมัติโดยไม่ต้องกรอกซ้ำ</p>
+              <div class="p-3 bg-light rounded-4 text-center border">
+                <div id="mobileConnectQrCode" class="bg-white p-2 border rounded-3 shadow-sm d-inline-block mb-2" style="width: 150px; height: 150px;"></div>
+                <div class="small fw-bold text-primary text-break mb-1" id="mobileConnectUrlText">กำลังตรวจหา IP...</div>
+                <span class="badge bg-info-subtle text-info small">เซิร์ฟเวอร์บันทึกการตั้งค่าไว้ที่ config.json</span>
+              </div>
+            </div>
+
+            <!-- Data Integrity & Maintenance Tools Card -->
+            <div class="card card-modern p-3 p-md-4 mt-3">
+              <h6 class="fw-bold text-dark mb-2 fs-6"><i class="bi bi-shield-check text-warning me-2"></i> เครื่องมือตรวจสอบ & ล้างข้อมูลซ้ำ</h6>
+              <p class="text-muted small mb-3">ตรวจสอบความถูกต้องและล้างข้อมูลที่บันทึกซ้ำซ้อนในระบบ</p>
+              <div class="d-grid gap-2">
+                <button class="btn btn-outline-danger btn-sm text-start" onclick="runCleanDuplicateBills()">
+                  <i class="bi bi-receipt me-1"></i> ตรวจสอบและล้างบิลที่ออกซ้ำ (Clean Duplicate Bills)
+                </button>
+                <button class="btn btn-outline-secondary btn-sm text-start" onclick="runCleanDuplicateMeters()">
+                  <i class="bi bi-speedometer2 me-1"></i> ตรวจสอบและล้างมิเตอร์ที่บันทึกซ้ำ (Clean Duplicate Meters)
                 </button>
               </div>
             </div>
@@ -2119,6 +2153,52 @@
           return { success: true, message: 'ลบบิลเรียบร้อยแล้ว' };
         }
 
+        case 'cleanDuplicateBills': {
+          const seen = {};
+          const toKeep = [];
+          let removed = 0;
+          (db.bills || []).forEach(b => {
+            const m = normalizeMonthYear(b.month_year);
+            const key = String(b.contract_id).trim() + '_' + m;
+            if (!seen[key]) {
+              seen[key] = b;
+              toKeep.push(b);
+            } else {
+              removed++;
+              if (b.status === 'paid' && seen[key].status !== 'paid') {
+                const idx = toKeep.indexOf(seen[key]);
+                if (idx !== -1) toKeep[idx] = b;
+                seen[key] = b;
+              }
+            }
+          });
+          db.bills = toKeep;
+          saveLocalDb(db);
+          return { success: true, removedCount: removed, message: removed > 0 ? `ล้างข้อมูลบิลซ้ำเรียบร้อยแล้ว ลบออก ${removed} รายการ` : 'ระบบตรวจสอบแล้ว ไม่พบบิลซ้ำในฐานข้อมูล' };
+        }
+
+        case 'cleanDuplicateMeters': {
+          const seen = {};
+          const toKeep = [];
+          let removed = 0;
+          (db.meterReadings || []).forEach(m => {
+            const my = normalizeMonthYear(m.month_year);
+            const key = String(m.room_id).trim() + '_' + my;
+            if (!seen[key]) {
+              seen[key] = m;
+              toKeep.push(m);
+            } else {
+              removed++;
+              const idx = toKeep.indexOf(seen[key]);
+              if (idx !== -1) toKeep[idx] = m;
+              seen[key] = m;
+            }
+          });
+          db.meterReadings = toKeep;
+          saveLocalDb(db);
+          return { success: true, removedCount: removed, message: removed > 0 ? `ล้างข้อมูลมิเตอร์ซ้ำเรียบร้อยแล้ว ลบออก ${removed} รายการ` : 'ระบบตรวจสอบแล้ว ไม่พบมิเตอร์ซ้ำในฐานข้อมูล' };
+        }
+
         case 'getSettings':
           return db.settings;
 
@@ -2554,9 +2634,26 @@
     }
 
     async function submitSaveRoom() {
+      const roomNum = document.getElementById('roomFormNumber').value.trim();
+      if (!roomNum) {
+        Swal.fire('ข้อผิดพลาด', 'กรุณาระบุหมายเลขห้องพัก', 'warning');
+        return;
+      }
+
+      const roomId = document.getElementById('roomFormId').value;
+      // ตรวจสอบหมายเลขห้องซ้ำ
+      const duplicate = (appData.rooms || []).find(r => 
+        String(r.room_number).trim().toLowerCase() === roomNum.toLowerCase() &&
+        String(r.id).trim() !== String(roomId).trim()
+      );
+      if (duplicate) {
+        Swal.fire('หมายเลขห้องซ้ำ', `หมายเลขห้อง "${roomNum}" มีอยู่ในระบบแล้ว กรุณาใช้หมายเลขอื่น`, 'warning');
+        return;
+      }
+
       const room = {
-        id: document.getElementById('roomFormId').value,
-        room_number: document.getElementById('roomFormNumber').value.trim(),
+        id: roomId,
+        room_number: roomNum,
         floor: Number(document.getElementById('roomFormFloor').value),
         room_type_id: document.getElementById('roomFormType').value,
         custom_price: document.getElementById('roomFormCustomPrice').value ? Number(document.getElementById('roomFormCustomPrice').value) : '',
@@ -2796,10 +2893,31 @@
     }
 
     async function submitNewContract() {
+      const roomId = document.getElementById('contractFormRoom').value;
+      if (!roomId) {
+        Swal.fire('ข้อผิดพลาด', 'กรุณาเลือกห้องพักสำหรับทำสัญญา', 'warning');
+        return;
+      }
+
+      const fullname = document.getElementById('contractFormFullname').value.trim();
+      if (!fullname) {
+        Swal.fire('ข้อผิดพลาด', 'กรุณาระบุชื่อ-นามสกุลผู้เช่า', 'warning');
+        return;
+      }
+
+      // ตรวจสอบว่าห้องนี้มีสัญญาเช่าที่ยังเปิดใช้งานอยู่แล้วหรือไม่
+      const activeContract = (appData.contracts || []).find(c => 
+        String(c.room_id).trim() === String(roomId).trim() && c.status === 'active'
+      );
+      if (activeContract) {
+        Swal.fire('สัญญาซ้อนทับ', `ห้องนี้มีสัญญาเช่าที่ยังใช้งานอยู่ (${activeContract.contract_code}) แล้ว ไม่สามารถทำสัญญาซ้อนได้`, 'warning');
+        return;
+      }
+
       const contractData = {
-        room_id: document.getElementById('contractFormRoom').value,
+        room_id: roomId,
         monthly_rent: Number(document.getElementById('contractFormRent').value),
-        fullname: document.getElementById('contractFormFullname').value.trim(),
+        fullname: fullname,
         phone: document.getElementById('contractFormPhone').value.trim(),
         id_card: document.getElementById('contractFormIdCard').value.trim(),
         deposit_amount: Number(document.getElementById('contractFormDeposit').value || 0),
@@ -3674,9 +3792,25 @@
     }
 
     async function submitSaveRoomType() {
+      const name = document.getElementById('roomTypeFormName').value.trim();
+      if (!name) {
+        Swal.fire('ข้อผิดพลาด', 'กรุณาระบุชื่อประเภทห้องพัก', 'warning');
+        return;
+      }
+
+      const id = document.getElementById('roomTypeFormId').value;
+      const duplicate = (appData.roomTypes || []).find(t => 
+        t.name.trim().toLowerCase() === name.toLowerCase() &&
+        String(t.id).trim() !== String(id).trim()
+      );
+      if (duplicate) {
+        Swal.fire('ประเภทห้องซ้ำ', `ชื่อประเภทห้องพัก "${name}" มีอยู่ในระบบแล้ว กรุณาใช้ชื่ออื่น`, 'warning');
+        return;
+      }
+
       const rt = {
-        id: document.getElementById('roomTypeFormId').value,
-        name: document.getElementById('roomTypeFormName').value.trim(),
+        id: id,
+        name: name,
         base_price: Number(document.getElementById('roomTypeFormPrice').value),
         description: document.getElementById('roomTypeFormDesc').value.trim()
       };
@@ -3783,6 +3917,7 @@
         appData.gasUrl = gasUrl;
         localStorage.setItem(APP_CONFIG.GAS_URL_KEY, gasUrl);
         updateDbStatusBadge();
+        syncGasUrlToServer(gasUrl);
       }
 
       showLoading('กำลังบันทึก...');
@@ -3817,9 +3952,10 @@
           appData.gasUrl = url;
           localStorage.setItem(APP_CONFIG.GAS_URL_KEY, url);
           updateDbStatusBadge();
+          syncGasUrlToServer(url);
           Swal.fire({
             title: 'เชื่อมต่อสำเร็จ!',
-            html: `เชื่อมต่อกับ Google Sheet: <strong>${data.data ? data.data.name : 'ฐานข้อมูลหอพัก'}</strong> เรียบร้อยแล้ว`,
+            html: `เชื่อมต่อกับ Google Sheet: <strong>${data.data ? data.data.name : 'ฐานข้อมูลหอพัก'}</strong> เรียบร้อยแล้ว<br><small class="text-success">บันทึกไปยังเซิร์ฟเวอร์แล้ว ทุกอุปกรณ์จะเชื่อมต่อชีตนี้อัตโนมัติ</small>`,
             icon: 'success'
           });
         } else {
@@ -3869,9 +4005,130 @@
       appData.gasUrl = url;
       localStorage.setItem(APP_CONFIG.GAS_URL_KEY, url);
       updateDbStatusBadge();
+      syncGasUrlToServer(url);
       bootstrap.Modal.getInstance(document.getElementById('connectModal')).hide();
-      Swal.fire('บันทึกแล้ว', 'บันทึก URL เชื่อมต่อเรียบร้อยแล้ว', 'success');
+      Swal.fire('บันทึกแล้ว', 'บันทึก URL เชื่อมต่อไปยังเซิร์ฟเวอร์เรียบร้อยแล้ว ทุกอุปกรณ์ (มือถือ, iPad, PC) จะเชื่อมต่อชีตนี้โดยอัตโนมัติ', 'success');
       refreshDashboard();
+    }
+
+    /**
+     * CENTRAL SERVER CONFIG SYNC (Cross-Device Solution)
+     */
+    async function syncGasUrlToServer(url) {
+      if (!url) return;
+      try {
+        await fetch('config.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ gasUrl: url })
+        });
+      } catch (err) {
+        console.warn('Unable to sync config to config.php:', err);
+      }
+    }
+
+    async function loadServerConfig() {
+      try {
+        const res = await fetch('config.php?_t=' + Date.now());
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.gasUrl) {
+            appData.gasUrl = data.gasUrl;
+            localStorage.setItem(APP_CONFIG.GAS_URL_KEY, data.gasUrl);
+            const cfgInput = document.getElementById('cfgGasUrl');
+            if (cfgInput) cfgInput.value = data.gasUrl;
+          }
+          if (data && data.mobile_url) {
+            appData.mobileUrl = data.mobile_url;
+            appData.serverIp = data.server_ip;
+            renderMobileConnectQr(data.mobile_url);
+          }
+        }
+      } catch (err) {
+        console.warn('Could not load config.php, falling back to localStorage:', err);
+      }
+      updateDbStatusBadge();
+    }
+
+    function renderMobileConnectQr(url) {
+      const container = document.getElementById('mobileConnectQrCode');
+      const textElem = document.getElementById('mobileConnectUrlText');
+      if (textElem) textElem.textContent = url;
+      if (!container) return;
+      container.innerHTML = '';
+      try {
+        new QRCode(container, {
+          text: url,
+          width: 136,
+          height: 136,
+          colorDark: '#0f172a',
+          colorLight: '#ffffff',
+          correctLevel: QRCode.CorrectLevel.M
+        });
+      } catch (e) {
+        console.warn('Mobile QR render error:', e);
+      }
+    }
+
+    /**
+     * DUPLICATE DATA CLEANUP TOOLS
+     */
+    async function runCleanDuplicateBills() {
+      const confirm = await Swal.fire({
+        title: 'ตรวจสอบ & ล้างบิลซ้ำ?',
+        text: 'ระบบจะสแกนหาบิลที่มีสัญญาและงวดเดือนเดียวกัน โดยจะเก็บบิลที่ชำระแล้วหรือบิลแรกไว้ และลบรายการที่ซ้ำออกเพื่อป้องกันความผิดพลาด',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#ef4444',
+        confirmButtonText: 'เริ่มตรวจสอบและล้างข้อมูล',
+        cancelButtonText: 'ยกเลิก'
+      });
+
+      if (confirm.isConfirmed) {
+        showLoading('กำลังตรวจสอบและล้างบิลซ้ำ...');
+        try {
+          const res = await apiCall('cleanDuplicateBills');
+          Swal.fire({
+            title: 'ผลการตรวจสอบบิลซ้ำ',
+            text: res.message || 'ดำเนินการเรียบร้อยแล้ว',
+            icon: res.removedCount > 0 ? 'success' : 'info'
+          });
+          loadBillsData();
+        } catch (err) {
+          Swal.fire('ข้อผิดพลาด', err.message, 'error');
+        } finally {
+          hideLoading();
+        }
+      }
+    }
+
+    async function runCleanDuplicateMeters() {
+      const confirm = await Swal.fire({
+        title: 'ตรวจสอบ & ล้างมิเตอร์ซ้ำ?',
+        text: 'ระบบจะสแกนหาการจดมิเตอร์ห้องเดียวกันในงวดเดียวกัน โดยจะเก็บบันทึกครั้งล่าสุดไว้ และลบรายการซ้ำที่ตกค้างออก',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#ef4444',
+        confirmButtonText: 'เริ่มตรวจสอบและล้างข้อมูล',
+        cancelButtonText: 'ยกเลิก'
+      });
+
+      if (confirm.isConfirmed) {
+        showLoading('กำลังตรวจสอบและล้างมิเตอร์ซ้ำ...');
+        try {
+          const res = await apiCall('cleanDuplicateMeters');
+          Swal.fire({
+            title: 'ผลการตรวจสอบมิเตอร์ซ้ำ',
+            text: res.message || 'ดำเนินการเรียบร้อยแล้ว',
+            icon: res.removedCount > 0 ? 'success' : 'info'
+          });
+          loadMeterReadings();
+        } catch (err) {
+          Swal.fire('ข้อผิดพลาด', err.message, 'error');
+        } finally {
+          hideLoading();
+        }
+      }
     }
 
     /**
@@ -3925,15 +4182,16 @@
     }
 
     /**
-     * INITIALIZATION
+     * INITIALIZATION (Cross-Device Auto-Config & Startup)
      */
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
       const currentMonthStr = new Date().toISOString().slice(0, 7);
       document.getElementById('dashMonthPicker').value = currentMonthStr;
       document.getElementById('meterMonthPicker').value = currentMonthStr;
       document.getElementById('billsMonthPicker').value = currentMonthStr;
 
-      updateDbStatusBadge();
+      // โหลดการตั้งค่าเซิร์ฟเวอร์ส่วนกลาง (Cross-Device Sync)
+      await loadServerConfig();
 
       if (checkAuth()) {
         refreshDashboard();
