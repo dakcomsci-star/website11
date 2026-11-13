@@ -1,0 +1,24 @@
+{
+  "name": "ระบบจัดการหอพักและค่าน้ำค่าไฟ",
+  "short_name": "จัดการหอพัก",
+  "description": "ระบบบริหารจัดการหอพัก ห้องพัก ผู้เช่า มิเตอร์น้ำ-ไฟ ออกบิล และ QR พร้อมเพย์",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#1e293b",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
